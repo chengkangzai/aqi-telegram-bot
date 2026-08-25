@@ -17,6 +17,7 @@ id -u aqibot &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/
 echo "==> Installing application to ${APP_DIR}"
 install -d -m 0755 "$APP_DIR"
 install -m 0755 "${REPO_DIR}/aqi_bot.py" "${APP_DIR}/aqi_bot.py"
+install -m 0755 "${REPO_DIR}/aqi_listener.py" "${APP_DIR}/aqi_listener.py"
 
 echo "==> Preparing ${CONF_DIR}"
 install -d -m 0750 -o root -g aqibot "$CONF_DIR"
@@ -30,11 +31,14 @@ fi
 echo "==> Installing systemd units"
 install -m 0644 "${REPO_DIR}/deploy/aqi-bot.service" /etc/systemd/system/aqi-bot.service
 install -m 0644 "${REPO_DIR}/deploy/aqi-bot.timer" /etc/systemd/system/aqi-bot.timer
+install -m 0644 "${REPO_DIR}/deploy/aqi-bot-listener.service" /etc/systemd/system/aqi-bot-listener.service
 systemctl daemon-reload
 systemctl enable --now aqi-bot.timer
+systemctl enable aqi-bot-listener.service
 
 echo
 echo "Done. Useful next steps:"
 echo "  edit    \$EDITOR ${CONF_DIR}/aqi-bot.env"
 echo "  test    systemctl start aqi-bot.service && journalctl -u aqi-bot -n 30 --no-pager"
 echo "  status  systemctl list-timers aqi-bot.timer"
+echo "  listener systemctl start aqi-bot-listener && journalctl -u aqi-bot-listener -f"

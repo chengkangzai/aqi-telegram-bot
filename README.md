@@ -27,6 +27,26 @@ things must get before you hear anything at all — the default of `2` means the
 first message arrives when AQI passes 100, and you also get one message when it
 drops back below.
 
+## Talking to it
+
+Alerts are pushed to you automatically, but you can also query on demand. The
+listener registers these with Telegram, so they autocomplete in the `/` menu:
+
+| Command | Does |
+| --- | --- |
+| `/now` | Fetch a fresh reading and reply immediately |
+| `/status` | Last completed check, current band, and active settings |
+| `/where` | Which location and coordinates are being watched |
+| `/help` | List the commands |
+
+This runs as a second unit, `aqi-bot-listener.service`, using long polling — so
+still no inbound port. It only ever *reads* the state file; the hourly timer
+stays the sole writer, so the two cannot race, and a `/now` query never affects
+whether an alert fires.
+
+Only user ids in `TELEGRAM_ALLOWED_USER_IDS` (default: `TELEGRAM_CHAT_ID`) get a
+response. Anyone else who finds the bot is logged and ignored.
+
 ## Data sources
 
 1. **WAQI / aqicn.org** — real ground-station measurements, including the
@@ -48,6 +68,7 @@ cd aqi-telegram-bot
 sudo ./deploy/install.sh
 sudo $EDITOR /etc/aqi-bot/aqi-bot.env   # fill in token, chat id, coordinates
 sudo systemctl start aqi-bot.service    # fire one check immediately
+sudo systemctl start aqi-bot-listener   # start answering commands
 journalctl -u aqi-bot -n 30 --no-pager
 ```
 

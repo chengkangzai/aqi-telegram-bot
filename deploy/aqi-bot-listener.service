@@ -1,0 +1,39 @@
+[Unit]
+Description=AQI Telegram listener (answers on-demand queries)
+Documentation=https://github.com/chengkangzai/aqi-telegram-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aqibot
+Group=aqibot
+EnvironmentFile=/etc/aqi-bot/aqi-bot.env
+WorkingDirectory=/opt/aqi-bot
+ExecStart=/usr/bin/python3 /opt/aqi-bot/aqi_listener.py
+
+# Long polling drops out whenever the uplink blips; just come back.
+Restart=always
+RestartSec=10
+
+StateDirectory=aqi-bot
+StateDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

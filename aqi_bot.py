@@ -10,6 +10,7 @@ hour.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -59,6 +60,11 @@ class Reading:
     dominant: str | None = None
     observed_at: str | None = None
     pm25: float | None = None
+
+
+def esc(value: object) -> str:
+    """Escape a value for Telegram's HTML parse mode."""
+    return html.escape(str(value), quote=False)
 
 
 def band_index(aqi: int) -> int:
@@ -233,13 +239,13 @@ def compose_message(reading: Reading, band: int, previous_band: int | None, loca
     if reading.pm25 is not None:
         lines.append(f"PM2.5: {reading.pm25}")
     if reading.dominant:
-        lines.append(f"Dominant pollutant: {reading.dominant}")
-    lines.append(f"Location: {location}")
+        lines.append(f"Dominant pollutant: {esc(reading.dominant)}")
+    lines.append(f"Location: {esc(location)}")
     if reading.station:
-        lines.append(f"Station: {reading.station}")
-    lines.append(f"Source: {reading.source}")
+        lines.append(f"Station: {esc(reading.station)}")
+    lines.append(f"Source: {esc(reading.source)}")
     if reading.observed_at:
-        lines.append(f"Observed: {reading.observed_at}")
+        lines.append(f"Observed: {esc(reading.observed_at)}")
 
     return "\n".join(lines).strip()
 
