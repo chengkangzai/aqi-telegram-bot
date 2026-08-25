@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the AQI Telegram watchdog hourly
+Documentation=https://github.com/chengkangzai/aqi-telegram-bot
+
+[Timer]
+OnCalendar=hourly
+# Spread load off the exact top of the hour so we are not hammering the
+# upstream APIs in lockstep with every other scheduled client.
+RandomizedDelaySec=180
+# If the host was asleep or the uplink was down, run once on the way back up.
+Persistent=true
+AccuracySec=1min
+Unit=aqi-bot.service
+
+[Install]
+WantedBy=timers.target

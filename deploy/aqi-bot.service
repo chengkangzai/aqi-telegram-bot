@@ -1,0 +1,34 @@
+[Unit]
+Description=AQI Telegram watchdog (one check cycle)
+Documentation=https://github.com/chengkangzai/aqi-telegram-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aqibot
+Group=aqibot
+EnvironmentFile=/etc/aqi-bot/aqi-bot.env
+ExecStart=/usr/bin/python3 /opt/aqi-bot/aqi_bot.py
+
+StateDirectory=aqi-bot
+StateDirectoryMode=0750
+
+# The script needs outbound HTTPS and its own state directory. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+TimeoutStartSec=120
