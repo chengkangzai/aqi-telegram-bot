@@ -55,6 +55,19 @@ journalctl -u aqi-bot -n 30 --no-pager
 script to `/opt/aqi-bot`, and enables an hourly timer with `Persistent=true` so a
 run missed while the host was down fires on the way back up.
 
+### Running in an unprivileged Proxmox LXC
+
+Enable nesting on the container, or `systemd-journald` will not start and you
+will get no logs at all:
+
+```bash
+pct set <vmid> --features nesting=1 && pct reboot <vmid>
+```
+
+Without it, journald dies with `status=243/CREDENTIALS` because systemd cannot
+set up its credentials mount. The bot itself still runs — which is exactly what
+makes this worth calling out, since the failure is silent.
+
 ## Configuration
 
 See [`deploy/aqi-bot.env.example`](deploy/aqi-bot.env.example). Required:
