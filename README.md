@@ -27,6 +27,24 @@ things must get before you hear anything at all — the default of `2` means the
 first message arrives when AQI passes 100, and you also get one message when it
 drops back below.
 
+### Repeats while it stays bad
+
+Silence is right when the air is fine, but during an active episode you want the
+running commentary. So once the reading is at or above the alert floor, the bot
+re-sends an update every `AQI_REPEAT_HOURS` (default 1) for as long as it stays
+there, reporting how long it has been going:
+
+> 🔴 **Still Unhealthy: AQI 174**
+> Ongoing for 4 hours.
+
+Set `AQI_REPEAT_HOURS=0` to go back to band-changes-only, or `=3` to be told
+every three hours instead. Repeats never fire below the alert floor, so good air
+still costs you nothing.
+
+A worked example — a real-shaped episode at hourly checks produces 11 messages
+across 19 hours, and none at all during the clean stretches at either end. See
+`EpisodeScenarioTests` for the exact expectations.
+
 ## Talking to it
 
 Alerts are pushed to you automatically, but you can also query on demand. The

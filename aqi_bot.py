@@ -178,6 +178,33 @@ def settle_band(aqi: int, previous_band: int | None, deadband: int) -> int:
     return raw if aqi <= upper_bound - deadband else previous_band
 
 
+def parse_timestamp(value: object) -> datetime | None:
+    """Parse a stored ISO timestamp, returning None when unusable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def repeat_is_due(last_alert_at: object, repeat_hours: int, now: datetime) -> bool:
+    """Decide whether enough time has passed to re-send an ongoing alert.
+
+    A five-minute tolerance absorbs the timer's randomised delay, which would
+    otherwise make an "hourly" repeat skip to every second hour whenever a run
+    landed a minute early.
+    """
+    if repeat_hours <= 0:
+        return False
+    last_alert = parse_timestamp(last_alert_at)
+    if last_alert is None:
+        return True
+    elapsed = (now - last_alert).total_seconds()
+    return elapsed >= repeat_hours * 3600 - 300
+
+
 def load_state(path: str) -> dict:
     """Read persisted state, returning an empty dict when absent or corrupt."""
     try:
@@ -220,11 +247,36 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
         raise RuntimeError(f"Telegram rejected the message: {payload}")
 
 
-def compose_message(reading: Reading, band: int, previous_band: int | None, location: str) -> str:
-    """Build the HTML message body for a band transition."""
+def humanise_duration(seconds: float) -> str:
+    """Render an elapsed span as a short human phrase."""
+    hours = int(seconds // 3600)
+    if hours < 1:
+        return "under an hour"
+    if hours == 1:
+        return "1 hour"
+    if hours < 48:
+        return f"{hours} hours"
+    return f"{hours // 24} days"
+
+
+def compose_message(
+    reading: Reading,
+    band: int,
+    previous_band: int | None,
+    location: str,
+    repeat: bool = False,
+    band_age_seconds: float | None = None,
+) -> str:
+    """Build the HTML message body for a band transition or an ongoing update."""
     _lower, _upper, label, emoji = BANDS[band]
 
-    if previous_band is None:
+    if repeat:
+        headline = f"{emoji} <b>Still {label}: AQI {reading.aqi}</b>"
+        if band_age_seconds is not None:
+            movement = f"Ongoing for {humanise_duration(band_age_seconds)}."
+        else:
+            movement = "Still elevated."
+    elif previous_band is None:
         headline = f"{emoji} <b>AQI {reading.aqi}</b> — {label}"
         movement = "Monitoring started."
     elif band > previous_band:
@@ -279,6 +331,7 @@ def main() -> int:
     state_path = os.environ.get("AQI_STATE_FILE", "/var/lib/aqi-bot/state.json")
     alert_floor = int(os.environ.get("AQI_ALERT_FLOOR_BAND", "2"))
     deadband = int(os.environ.get("AQI_DEADBAND", "3"))
+    repeat_hours = int(os.environ.get("AQI_REPEAT_HOURS", "1"))
 
     try:
         reading = get_reading(lat, lon, waqi_token)
@@ -288,12 +341,19 @@ def main() -> int:
         log.error("%s", exc)
         return 1
 
+    now = datetime.now(timezone.utc)
     state = load_state(state_path)
     previous_band = state.get("band")
     if not isinstance(previous_band, int):
         previous_band = None
 
     band = settle_band(reading.aqi, previous_band, deadband)
+    band_changed = band != previous_band
+
+    # Track how long we have been sitting in this band, so an ongoing alert can
+    # say "for 5 hours" rather than repeating itself blankly.
+    band_since = now if band_changed else (parse_timestamp(state.get("band_since")) or now)
+
     log.info(
         "AQI %s -> band %s (%s), previous %s, source %s",
         reading.aqi,
@@ -303,19 +363,33 @@ def main() -> int:
         reading.source,
     )
 
-    # Alert when crossing into or out of the "worth telling me about" zone,
-    # and on every band change while inside it.
-    should_alert = band != previous_band and (band >= alert_floor or (previous_band or 0) >= alert_floor)
+    # Two independent reasons to speak:
+    #   crossing - moved into or out of the zone worth reporting
+    #   repeat   - still in a bad band, and the repeat interval has elapsed
+    crossing = band_changed and (band >= alert_floor or (previous_band or 0) >= alert_floor)
+    repeat = (
+        not crossing
+        and band >= alert_floor
+        and repeat_is_due(state.get("last_alert_at"), repeat_hours, now)
+    )
 
-    if should_alert:
-        message = compose_message(reading, band, previous_band, location)
+    if crossing or repeat:
+        message = compose_message(
+            reading,
+            band,
+            previous_band,
+            location,
+            repeat=repeat,
+            band_age_seconds=(now - band_since).total_seconds() if repeat else None,
+        )
         try:
             send_telegram(telegram_token, chat_id, message)
-            log.info("Alert sent: band %s -> %s", previous_band, band)
         except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as exc:
-            # Do not persist the new band, so the next run retries the alert.
+            # Do not persist anything, so the next run retries the alert.
             log.error("Failed to send Telegram message: %s", exc)
             return 1
+        state["last_alert_at"] = now.isoformat(timespec="seconds")
+        log.info("Alert sent (%s): band %s -> %s", "repeat" if repeat else "change", previous_band, band)
     else:
         log.info("No alert needed")
 
@@ -324,7 +398,8 @@ def main() -> int:
             "band": band,
             "aqi": reading.aqi,
             "source": reading.source,
-            "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "band_since": band_since.isoformat(timespec="seconds"),
+            "checked_at": now.isoformat(timespec="seconds"),
         }
     )
     save_state(state_path, state)
