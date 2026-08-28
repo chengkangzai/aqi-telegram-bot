@@ -100,3 +100,65 @@ class RenderingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForecastTests(unittest.TestCase):
+    def _points(self, values, start_hour=7):
+        from aqi_bot import ForecastPoint
+        return [
+            ForecastPoint(time=f"2026-08-29T{(start_hour + i) % 24:02d}:00", aqi=v)
+            for i, v in enumerate(values)
+        ]
+
+    def test_parse_hours_defaults_when_absent(self):
+        self.assertEqual(aqi_listener.parse_forecast_hours([]), 24)
+
+    def test_parse_hours_accepts_a_number(self):
+        self.assertEqual(aqi_listener.parse_forecast_hours(["48"]), 48)
+
+    def test_parse_hours_clamps_both_ends(self):
+        self.assertEqual(aqi_listener.parse_forecast_hours(["1"]), 6)
+        self.assertEqual(aqi_listener.parse_forecast_hours(["500"]), 96)
+
+    def test_parse_hours_ignores_rubbish(self):
+        self.assertEqual(aqi_listener.parse_forecast_hours(["soon"]), 24)
+
+    def test_extract_args(self):
+        self.assertEqual(aqi_listener.extract_args("/forecast 48"), ["48"])
+        self.assertEqual(aqi_listener.extract_args("/forecast"), [])
+        self.assertEqual(aqi_listener.extract_args("/now"), [])
+
+    def test_format_slot(self):
+        self.assertEqual(aqi_listener.format_slot("2026-08-29T15:00"), "Sat 15:00")
+
+    def test_format_slot_survives_bad_input(self):
+        self.assertEqual(aqi_listener.format_slot("nonsense"), "nonsense")
+
+    def test_forecast_reports_peak_and_trough(self):
+        text = aqi_listener.describe_forecast(
+            self._points([90, 120, 205, 150, 80]), "Bukit Jalil", 24
+        )
+        self.assertIn("Peak:", text)
+        self.assertIn("AQI 205", text)
+        self.assertIn("Best:", text)
+        self.assertIn("AQI 80", text)
+
+    def test_forecast_advice_matches_the_peak_not_the_average(self):
+        text = aqi_listener.describe_forecast(self._points([40, 40, 310, 40]), "X", 24)
+        self.assertIn("Stay indoors", text)
+
+    def test_forecast_handles_no_data(self):
+        text = aqi_listener.describe_forecast([], "Bukit Jalil", 24)
+        self.assertIn("Could not fetch", text)
+
+    def test_timeline_is_capped_to_keep_the_message_readable(self):
+        text = aqi_listener.describe_forecast(self._points([100] * 96), "X", 96)
+        rows = [ln for ln in text.splitlines() if "AQI" not in ln and ":00" in ln]
+        self.assertLessEqual(len(rows), aqi_listener.FORECAST_ROWS)
+
+    def test_location_is_escaped(self):
+        text = aqi_listener.describe_forecast(self._points([50]), "A & B", 24)
+        self.assertIn("A &amp; B", text)
+
+    def test_forecast_is_registered_as_a_command(self):
+        self.assertIn("forecast", [name for name, _ in aqi_listener.COMMANDS])

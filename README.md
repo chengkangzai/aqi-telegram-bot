@@ -53,6 +53,7 @@ listener registers these with Telegram, so they autocomplete in the `/` menu:
 | Command | Does |
 | --- | --- |
 | `/now` | Fetch a fresh reading and reply immediately |
+| `/forecast` | Hourly outlook for the next 24h. `/forecast 48` widens it (6–96h) |
 | `/status` | Last completed check, current band, and active settings |
 | `/where` | Which location and coordinates are being watched |
 | `/help` | List the commands |
@@ -64,6 +65,11 @@ whether an alert fires.
 
 Only user ids in `TELEGRAM_ALLOWED_USER_IDS` (default: `TELEGRAM_CHAT_ID`) get a
 response. Anyone else who finds the bot is logged and ignored.
+
+The forecast always comes from Open-Meteo even when live readings use WAQI,
+because WAQI only publishes a coarse daily PM2.5 outlook. It reports the
+window's peak and trough, then samples the timeline down to eight rows so a
+96-hour request stays as readable as a 24-hour one.
 
 ## Data sources
 

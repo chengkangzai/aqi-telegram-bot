@@ -18,16 +18,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from datetime import datetime
+
 from aqi_bot import (
     ADVICE,
     BANDS,
+    ForecastPoint,
     Reading,
     band_index,
     esc,
+    fetch_forecast,
     get_reading,
     load_state,
     send_telegram,
 )
+
+DEFAULT_FORECAST_HOURS = 24
+MIN_FORECAST_HOURS = 6
+MAX_FORECAST_HOURS = 96
+FORECAST_ROWS = 8
 
 POLL_TIMEOUT = 30
 HTTP_TIMEOUT = POLL_TIMEOUT + 15
@@ -36,6 +45,7 @@ MAX_BACKOFF_SECONDS = 120
 
 COMMANDS = [
     ("now", "Current air quality reading"),
+    ("forecast", "Hourly outlook, e.g. /forecast 48"),
     ("status", "Last check, band and settings"),
     ("where", "Which location is being watched"),
     ("help", "Show available commands"),
@@ -152,7 +162,65 @@ def describe_help() -> str:
     return "\n".join(lines)
 
 
-def handle_command(command: str, config: dict) -> str:
+def format_slot(stamp: str) -> str:
+    """Render an ISO local timestamp as a short 'Fri 15:00' label."""
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    return moment.strftime("%a %H:%M")
+
+
+def describe_forecast(points: list[ForecastPoint], location: str, hours: int) -> str:
+    """Render an hourly outlook with its peak, trough and a sampled timeline."""
+    if not points:
+        return "Could not fetch a forecast just now. Try again shortly."
+
+    peak = max(points, key=lambda point: point.aqi)
+    trough = min(points, key=lambda point: point.aqi)
+
+    def label(point: ForecastPoint) -> str:
+        band = band_index(point.aqi)
+        return f"{BANDS[band][3]} AQI {point.aqi} — {format_slot(point.time)}"
+
+    lines = [
+        f"📈 <b>Forecast — {esc(location)}</b>",
+        f"Next {len(points)} hours",
+        "",
+        f"Peak:  {label(peak)}",
+        f"Best:  {label(trough)}",
+        "",
+    ]
+
+    # Sample evenly so the timeline stays readable at any window length.
+    step = max(1, len(points) // FORECAST_ROWS)
+    for point in points[::step][:FORECAST_ROWS]:
+        band = band_index(point.aqi)
+        lines.append(f"{format_slot(point.time)}  {BANDS[band][3]} {point.aqi}")
+
+    worst_band = band_index(peak.aqi)
+    lines += ["", ADVICE.get(worst_band, ""), "", "Source: Open-Meteo (modelled)"]
+    return "\n".join(lines).strip()
+
+
+def parse_forecast_hours(args: list[str]) -> int:
+    """Read an optional hour count from the command arguments."""
+    if not args:
+        return DEFAULT_FORECAST_HOURS
+    try:
+        requested = int(args[0])
+    except ValueError:
+        return DEFAULT_FORECAST_HOURS
+    return max(MIN_FORECAST_HOURS, min(MAX_FORECAST_HOURS, requested))
+
+
+def extract_args(text: str) -> list[str]:
+    """Return the whitespace-separated arguments following a command."""
+    parts = text.strip().split()
+    return parts[1:] if len(parts) > 1 else []
+
+
+def handle_command(command: str, config: dict, args: list[str] | None = None) -> str:
     """Map a command word to its reply text."""
     if command in ("start", "help"):
         return describe_help()
@@ -165,6 +233,11 @@ def handle_command(command: str, config: dict) -> str:
 
     if command == "status":
         return describe_status(config)
+
+    if command == "forecast":
+        hours = parse_forecast_hours(args or [])
+        points = fetch_forecast(config["lat"], config["lon"], hours)
+        return describe_forecast(points, config["location"], hours)
 
     if command == "now":
         try:
@@ -207,7 +280,7 @@ def process_update(update: dict, config: dict) -> None:
         return
 
     log.info("Handling /%s from %s", command, sender)
-    reply = handle_command(command, config)
+    reply = handle_command(command, config, extract_args(text))
     try:
         send_telegram(config["token"], str(chat_id), reply)
     except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as exc:

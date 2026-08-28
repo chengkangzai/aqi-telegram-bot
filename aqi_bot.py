@@ -62,6 +62,14 @@ class Reading:
     pm25: float | None = None
 
 
+@dataclass
+class ForecastPoint:
+    """A single hourly forecast sample."""
+
+    time: str
+    aqi: int
+
+
 def esc(value: object) -> str:
     """Escape a value for Telegram's HTML parse mode."""
     return html.escape(str(value), quote=False)
@@ -141,6 +149,54 @@ def fetch_open_meteo(lat: float, lon: float) -> Reading | None:
         observed_at=current.get("time"),
         pm25=current.get("pm2_5"),
     )
+
+
+def fetch_forecast(lat: float, lon: float, hours: int = 24) -> list[ForecastPoint]:
+    """Fetch the hourly US AQI forecast from Open-Meteo.
+
+    WAQI only publishes a coarse daily PM2.5 outlook, so the forecast always
+    comes from Open-Meteo regardless of which source the live reading used.
+    Times are returned in the location's own timezone.
+    """
+    forecast_days = max(1, min(5, (hours // 24) + 2))
+    query = urllib.parse.urlencode(
+        {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "us_aqi",
+            "current": "us_aqi",
+            "timezone": "auto",
+            "forecast_days": forecast_days,
+        }
+    )
+    url = f"https://air-quality-api.open-meteo.com/v1/air-quality?{query}"
+    try:
+        payload = http_get_json(url)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        log.warning("Forecast request failed: %s", exc)
+        return []
+
+    hourly = payload.get("hourly") or {}
+    times = hourly.get("time") or []
+    values = hourly.get("us_aqi") or []
+    now_stamp = (payload.get("current") or {}).get("time")
+
+    # The response starts at midnight local, so skip anything already past.
+    start = 0
+    if now_stamp:
+        for index, stamp in enumerate(times):
+            if stamp >= now_stamp:
+                start = index
+                break
+
+    points: list[ForecastPoint] = []
+    for stamp, value in zip(times[start:], values[start:]):
+        if value is None:
+            continue
+        points.append(ForecastPoint(time=stamp, aqi=int(round(float(value)))))
+        if len(points) >= hours:
+            break
+    return points
 
 
 def get_reading(lat: float, lon: float, waqi_token: str | None) -> Reading:
