@@ -18,6 +18,19 @@ echo "==> Installing application to ${APP_DIR}"
 install -d -m 0755 "$APP_DIR"
 install -m 0755 "${REPO_DIR}/aqi_bot.py" "${APP_DIR}/aqi_bot.py"
 install -m 0755 "${REPO_DIR}/aqi_listener.py" "${APP_DIR}/aqi_listener.py"
+install -m 0755 "${REPO_DIR}/aqi_chart.py" "${APP_DIR}/aqi_chart.py"
+
+echo "==> Checking chart support"
+if python3 -c "import matplotlib" 2>/dev/null; then
+  echo "    matplotlib present."
+elif command -v apt-get >/dev/null; then
+  echo "    Installing python3-matplotlib for /forecast charts..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-matplotlib >/dev/null 2>&1 \
+    && echo "    Installed." \
+    || echo "    Install failed - /forecast will reply in text instead."
+else
+  echo "    No matplotlib and no apt-get; /forecast will reply in text instead."
+fi
 
 echo "==> Preparing ${CONF_DIR}"
 install -d -m 0750 -o root -g aqibot "$CONF_DIR"

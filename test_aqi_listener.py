@@ -17,6 +17,7 @@ BASE_CONFIG = {
     "waqi_token": None,
     "state_path": "/nonexistent/state.json",
     "offset_path": "/nonexistent/offset.json",
+    "chart_theme": "light",
     "alert_floor": 2,
     "deadband": 3,
 }
@@ -88,13 +89,13 @@ class RenderingTests(unittest.TestCase):
             self.assertIn(f"/{name}", text)
 
     def test_unknown_command_is_escaped(self):
-        reply = aqi_listener.handle_command("<script>", BASE_CONFIG)
+        reply, _ = aqi_listener.handle_command("<script>", BASE_CONFIG)
         self.assertIn("&lt;script&gt;", reply)
         self.assertNotIn("<script>", reply)
 
     def test_now_reports_failure_gracefully(self):
         with mock.patch.object(aqi_listener, "get_reading", side_effect=RuntimeError("down")):
-            reply = aqi_listener.handle_command("now", BASE_CONFIG)
+            reply, _ = aqi_listener.handle_command("now", BASE_CONFIG)
         self.assertIn("Could not reach", reply)
 
 
@@ -162,3 +163,96 @@ class ForecastTests(unittest.TestCase):
 
     def test_forecast_is_registered_as_a_command(self):
         self.assertIn("forecast", [name for name, _ in aqi_listener.COMMANDS])
+
+
+class ChartDeliveryTests(unittest.TestCase):
+    def _config(self):
+        return dict(BASE_CONFIG)
+
+    def test_text_commands_carry_no_chart(self):
+        for command in ("help", "status", "where"):
+            with self.subTest(command=command):
+                _text, chart = aqi_listener.handle_command(command, self._config())
+                self.assertIsNone(chart)
+
+    def test_forecast_attaches_a_chart(self):
+        from aqi_bot import ForecastPoint
+        points = [ForecastPoint(time=f"2026-08-29T{h:02d}:00", aqi=100 + h) for h in range(12)]
+        with mock.patch.object(aqi_listener, "fetch_forecast", return_value=points), \
+             mock.patch.object(aqi_listener, "render_chart", return_value=b"PNGDATA"):
+            text, chart = aqi_listener.handle_command("forecast", self._config())
+        self.assertEqual(chart, b"PNGDATA")
+        self.assertIn("Forecast", text)
+
+    def test_forecast_falls_back_to_text_when_rendering_fails(self):
+        from aqi_bot import ForecastPoint
+        points = [ForecastPoint(time=f"2026-08-29T{h:02d}:00", aqi=100 + h) for h in range(12)]
+        with mock.patch.object(aqi_listener, "fetch_forecast", return_value=points), \
+             mock.patch.object(aqi_listener, "render_chart", return_value=None):
+            text, chart = aqi_listener.handle_command("forecast", self._config())
+        self.assertIsNone(chart)
+        self.assertIn("Peak:", text)
+
+    def test_render_chart_survives_a_broken_renderer(self):
+        with mock.patch.dict("sys.modules", {"aqi_chart": mock.MagicMock(
+                render_forecast_chart=mock.Mock(side_effect=ValueError("boom")))}):
+            self.assertIsNone(aqi_listener.render_chart([], "X", "light"))
+
+    def test_photo_is_sent_when_a_chart_exists(self):
+        update = {"update_id": 1, "message": {"from": {"id": 42}, "chat": {"id": 42}, "text": "/forecast"}}
+        with mock.patch.object(aqi_listener, "handle_command", return_value=("caption", b"PNG")), \
+             mock.patch.object(aqi_listener, "send_photo") as photo, \
+             mock.patch.object(aqi_listener, "send_telegram") as text:
+            aqi_listener.process_update(update, BASE_CONFIG)
+        photo.assert_called_once()
+        text.assert_not_called()
+
+    def test_text_is_sent_when_there_is_no_chart(self):
+        update = {"update_id": 1, "message": {"from": {"id": 42}, "chat": {"id": 42}, "text": "/help"}}
+        with mock.patch.object(aqi_listener, "send_photo") as photo, \
+             mock.patch.object(aqi_listener, "send_telegram") as text:
+            aqi_listener.process_update(update, BASE_CONFIG)
+        text.assert_called_once()
+        photo.assert_not_called()
+
+
+class ChartRenderingTests(unittest.TestCase):
+    def _points(self, values):
+        from aqi_bot import ForecastPoint
+        import datetime as dt
+        base = dt.datetime(2026, 8, 29, 7, 0)
+        return [
+            ForecastPoint(time=(base + dt.timedelta(hours=i)).isoformat(timespec="minutes"), aqi=v)
+            for i, v in enumerate(values)
+        ]
+
+    def test_renders_a_png(self):
+        from aqi_chart import render_forecast_chart
+        png = render_forecast_chart(self._points([120, 140, 180, 160, 130]), "X")
+        self.assertIsNotNone(png)
+        self.assertTrue(png.startswith(b"\x89PNG"), "output should be a PNG")
+
+    def test_both_themes_render(self):
+        from aqi_chart import render_forecast_chart
+        for theme in ("light", "dark"):
+            with self.subTest(theme=theme):
+                self.assertTrue(render_forecast_chart(self._points([90, 120, 150]), "X", theme))
+
+    def test_unknown_theme_falls_back_to_light(self):
+        from aqi_chart import render_forecast_chart
+        self.assertTrue(render_forecast_chart(self._points([90, 120, 150]), "X", "chartreuse"))
+
+    def test_too_few_points_renders_nothing(self):
+        from aqi_chart import render_forecast_chart
+        self.assertIsNone(render_forecast_chart(self._points([100]), "X"))
+        self.assertIsNone(render_forecast_chart([], "X"))
+
+    def test_unparseable_timestamps_render_nothing(self):
+        from aqi_bot import ForecastPoint
+        from aqi_chart import render_forecast_chart
+        bad = [ForecastPoint(time="nope", aqi=100), ForecastPoint(time="also nope", aqi=110)]
+        self.assertIsNone(render_forecast_chart(bad, "X"))
+
+    def test_flat_series_does_not_collapse_the_axis(self):
+        from aqi_chart import render_forecast_chart
+        self.assertTrue(render_forecast_chart(self._points([100] * 12), "X"))

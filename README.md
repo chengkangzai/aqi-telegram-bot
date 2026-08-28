@@ -53,7 +53,7 @@ listener registers these with Telegram, so they autocomplete in the `/` menu:
 | Command | Does |
 | --- | --- |
 | `/now` | Fetch a fresh reading and reply immediately |
-| `/forecast` | Hourly outlook for the next 24h. `/forecast 48` widens it (6–96h) |
+| `/forecast` | Hourly outlook as a chart. `/forecast 48` widens it (6–96h) |
 | `/status` | Last completed check, current band, and active settings |
 | `/where` | Which location and coordinates are being watched |
 | `/help` | List the commands |
@@ -65,6 +65,18 @@ whether an alert fires.
 
 Only user ids in `TELEGRAM_ALLOWED_USER_IDS` (default: `TELEGRAM_CHAT_ID`) get a
 response. Anyone else who finds the bot is logged and ignored.
+
+`/forecast` replies with a rendered PNG. The chart is one line in neutral ink
+over recessive AQI severity bands, each labelled — so severity is never carried
+by colour alone — with only the peak direct-labelled. The y-axis anchors one
+band below the data rather than at zero: the bands already supply absolute
+context, and a forced zero baseline squeezes a 140–220 day into the top third of
+the canvas. `AQI_CHART_THEME=light|dark` picks the palette; both are chosen
+against their own surface rather than one being an inversion of the other.
+
+Charting needs `python3-matplotlib` (the installer adds it). Without it, or if
+rendering throws, `/forecast` degrades to the same summary in text — the reply
+is never lost.
 
 The forecast always comes from Open-Meteo even when live readings use WAQI,
 because WAQI only publishes a coarse daily PM2.5 outlook. It reports the

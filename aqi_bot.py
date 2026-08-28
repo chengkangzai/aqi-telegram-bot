@@ -315,6 +315,37 @@ def humanise_duration(seconds: float) -> str:
     return f"{hours // 24} days"
 
 
+def send_photo(token: str, chat_id: str, photo: bytes, caption: str) -> None:
+    """Upload a PNG to Telegram with a caption, raising on a non-ok response."""
+    boundary = "----aqibotformboundary"
+    parts = b""
+    for name, value in (("chat_id", chat_id), ("caption", caption[:1024]), ("parse_mode", "HTML")):
+        parts += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n"
+        ).encode("utf-8")
+    parts += (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="photo"; filename="forecast.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode("utf-8")
+    parts += photo + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendPhoto",
+        data=parts,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT * 2) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not payload.get("ok"):
+        raise RuntimeError(f"Telegram rejected the photo: {payload}")
+
+
 def compose_message(
     reading: Reading,
     band: int,

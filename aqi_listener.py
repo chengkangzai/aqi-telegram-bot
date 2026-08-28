@@ -30,6 +30,7 @@ from aqi_bot import (
     fetch_forecast,
     get_reading,
     load_state,
+    send_photo,
     send_telegram,
 )
 
@@ -37,6 +38,24 @@ DEFAULT_FORECAST_HOURS = 24
 MIN_FORECAST_HOURS = 6
 MAX_FORECAST_HOURS = 96
 FORECAST_ROWS = 8
+
+
+def render_chart(points, location, theme):
+    """Render a forecast chart, returning None if charting is unavailable.
+
+    matplotlib is an optional extra: without it the bot still answers, just in
+    text. Import lazily so the alerting path never pays for it.
+    """
+    try:
+        from aqi_chart import render_forecast_chart
+    except ImportError:
+        log.info("matplotlib not installed; sending the forecast as text")
+        return None
+    try:
+        return render_forecast_chart(points, location, theme)
+    except Exception:  # noqa: BLE001 - a chart failure must not lose the reply
+        log.exception("Chart rendering failed; falling back to text")
+        return None
 
 POLL_TIMEOUT = 30
 HTTP_TIMEOUT = POLL_TIMEOUT + 15
@@ -220,34 +239,38 @@ def extract_args(text: str) -> list[str]:
     return parts[1:] if len(parts) > 1 else []
 
 
-def handle_command(command: str, config: dict, args: list[str] | None = None) -> str:
-    """Map a command word to its reply text."""
+def handle_command(
+    command: str, config: dict, args: list[str] | None = None
+) -> tuple[str, bytes | None]:
+    """Map a command word to its reply text and optional chart image."""
     if command in ("start", "help"):
-        return describe_help()
+        return describe_help(), None
 
     if command == "where":
         return (
             f"Watching <b>{esc(config['location'])}</b>\n"
             f"Coordinates: {config['lat']}, {config['lon']}"
-        )
+        ), None
 
     if command == "status":
-        return describe_status(config)
+        return describe_status(config), None
 
     if command == "forecast":
         hours = parse_forecast_hours(args or [])
         points = fetch_forecast(config["lat"], config["lon"], hours)
-        return describe_forecast(points, config["location"], hours)
+        text = describe_forecast(points, config["location"], hours)
+        chart = render_chart(points, config["location"], config["chart_theme"]) if points else None
+        return text, chart
 
     if command == "now":
         try:
             reading = get_reading(config["lat"], config["lon"], config["waqi_token"])
         except RuntimeError as exc:
             log.warning("/now failed: %s", exc)
-            return "Could not reach any air-quality source just now. Try again shortly."
-        return describe_reading(reading, config["location"])
+            return "Could not reach any air-quality source just now. Try again shortly.", None
+        return describe_reading(reading, config["location"]), None
 
-    return f"Unknown command /{esc(command)}. Try /help."
+    return f"Unknown command /{esc(command)}. Try /help.", None
 
 
 def extract_command(text: str) -> str | None:
@@ -280,9 +303,12 @@ def process_update(update: dict, config: dict) -> None:
         return
 
     log.info("Handling /%s from %s", command, sender)
-    reply = handle_command(command, config, extract_args(text))
+    reply, chart = handle_command(command, config, extract_args(text))
     try:
-        send_telegram(config["token"], str(chat_id), reply)
+        if chart:
+            send_photo(config["token"], str(chat_id), chart, reply)
+        else:
+            send_telegram(config["token"], str(chat_id), reply)
     except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as exc:
         log.error("Failed to reply to /%s: %s", command, exc)
 
@@ -316,6 +342,7 @@ def build_config() -> dict:
         "waqi_token": os.environ.get("WAQI_TOKEN", "").strip() or None,
         "state_path": os.environ.get("AQI_STATE_FILE", "/var/lib/aqi-bot/state.json"),
         "offset_path": os.environ.get("AQI_OFFSET_FILE", "/var/lib/aqi-bot/offset.json"),
+        "chart_theme": os.environ.get("AQI_CHART_THEME", "light").strip().lower(),
         "alert_floor": int(os.environ.get("AQI_ALERT_FLOOR_BAND", "2")),
         "deadband": int(os.environ.get("AQI_DEADBAND", "3")),
     }
