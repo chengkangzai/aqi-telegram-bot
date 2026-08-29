@@ -408,7 +408,10 @@ def relative_phrase(target: datetime, now: datetime | None) -> str:
     else:
         phrase = f"in about {int(round(hours / 24))} days"
 
-    # Past a few hours the relative form alone stops being concrete.
+    # Past a few hours the relative form alone stops being concrete. Past a day
+    # a bare clock time is ambiguous too - "(20:00)" does not say which day.
+    if hours > 22:
+        return f"{phrase} ({target:%a %H:%M})"
     if hours > 6:
         return f"{phrase} ({target:%H:%M})"
     return phrase

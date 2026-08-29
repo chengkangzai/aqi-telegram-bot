@@ -282,3 +282,27 @@ class RelativePhraseTests(unittest.TestCase):
         import datetime as dt
         from aqi_bot import relative_phrase
         self.assertEqual(relative_phrase(dt.datetime(2026, 8, 29, 19, 0), None), "at 19:00")
+
+
+class RelativePhraseDayAnchorTests(unittest.TestCase):
+    import datetime as _dt
+    NOW = _dt.datetime(2026, 8, 29, 16, 30)  # a Saturday
+
+    def phrase(self, **delta):
+        import datetime as dt
+        from aqi_bot import relative_phrase
+        return relative_phrase(self.NOW + dt.timedelta(**delta), self.NOW)
+
+    def test_same_day_anchor_omits_the_weekday(self):
+        self.assertEqual(self.phrase(hours=14), "in about 14 hours (06:30)")
+
+    def test_day_scale_anchor_names_the_weekday(self):
+        # "(20:30)" alone would not say which day.
+        self.assertEqual(self.phrase(hours=28), "in about a day (Sun 20:30)")
+
+    def test_multi_day_anchor_names_the_weekday(self):
+        self.assertIn("(Tue", self.phrase(hours=72))
+
+    def test_threshold_boundary(self):
+        self.assertNotIn("Sun", self.phrase(hours=22))
+        self.assertIn("Sun", self.phrase(hours=23))
