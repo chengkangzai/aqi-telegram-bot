@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 USER_AGENT = "aqi-telegram-bot/1.0 (+https://github.com/chengkangzai/aqi-telegram-bot)"
 HTTP_TIMEOUT = 20
@@ -68,6 +68,32 @@ class ForecastPoint:
 
     time: str
     aqi: int
+
+
+@dataclass
+class Forecast:
+    """Hourly samples plus the provider's own idea of "now".
+
+    The timestamp comes from the same response as the samples and is in the
+    location's timezone, so nothing downstream has to trust the host clock.
+    """
+
+    points: list[ForecastPoint]
+    now: str | None = None
+    utc_offset_seconds: int | None = None
+
+    def current_local_time(self) -> datetime | None:
+        """The current moment in the location's timezone, to the minute.
+
+        The provider's own `now` is rounded to the hour, which would put a
+        "now" marker exactly on the first sample. Reconstructing it from UTC
+        plus the reported offset puts the marker where the time actually is,
+        and still never consults the host's timezone.
+        """
+        if self.utc_offset_seconds is None:
+            return None
+        utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return utc_now + timedelta(seconds=self.utc_offset_seconds)
 
 
 def esc(value: object) -> str:
@@ -152,6 +178,11 @@ def fetch_open_meteo(lat: float, lon: float) -> Reading | None:
 
 
 def fetch_forecast(lat: float, lon: float, hours: int = 24) -> list[ForecastPoint]:
+    """Fetch the hourly US AQI forecast, discarding the current-time marker."""
+    return fetch_forecast_detail(lat, lon, hours).points
+
+
+def fetch_forecast_detail(lat: float, lon: float, hours: int = 24) -> Forecast:
     """Fetch the hourly US AQI forecast from Open-Meteo.
 
     WAQI only publishes a coarse daily PM2.5 outlook, so the forecast always
@@ -174,7 +205,7 @@ def fetch_forecast(lat: float, lon: float, hours: int = 24) -> list[ForecastPoin
         payload = http_get_json(url)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         log.warning("Forecast request failed: %s", exc)
-        return []
+        return Forecast(points=[])
 
     hourly = payload.get("hourly") or {}
     times = hourly.get("time") or []
@@ -196,7 +227,12 @@ def fetch_forecast(lat: float, lon: float, hours: int = 24) -> list[ForecastPoin
         points.append(ForecastPoint(time=stamp, aqi=int(round(float(value)))))
         if len(points) >= hours:
             break
-    return points
+    offset = payload.get("utc_offset_seconds")
+    return Forecast(
+        points=points,
+        now=now_stamp,
+        utc_offset_seconds=int(offset) if isinstance(offset, (int, float)) else None,
+    )
 
 
 def get_reading(lat: float, lon: float, waqi_token: str | None) -> Reading:

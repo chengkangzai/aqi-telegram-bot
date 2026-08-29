@@ -72,7 +72,10 @@ by colour alone — with only the peak direct-labelled. The y-axis anchors one
 band below the data rather than at zero: the bands already supply absolute
 context, and a forced zero baseline squeezes a 140–220 day into the top third of
 the canvas. `AQI_CHART_THEME=light|dark` picks the palette; both are chosen
-against their own surface rather than one being an inversion of the other.
+against their own surface rather than one being an inversion of the other. A
+solid rule marks the current moment, reconstructed from UTC plus the provider's
+reported offset rather than read off the host clock — the two disagree whenever
+the host and the watched location sit in different timezones.
 
 Charting needs `python3-matplotlib` (the installer adds it). Without it, or if
 rendering throws, `/forecast` degrades to the same summary in text — the reply

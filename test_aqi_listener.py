@@ -178,7 +178,9 @@ class ChartDeliveryTests(unittest.TestCase):
     def test_forecast_attaches_a_chart(self):
         from aqi_bot import ForecastPoint
         points = [ForecastPoint(time=f"2026-08-29T{h:02d}:00", aqi=100 + h) for h in range(12)]
-        with mock.patch.object(aqi_listener, "fetch_forecast", return_value=points), \
+        from aqi_bot import Forecast
+        with mock.patch.object(aqi_listener, "fetch_forecast_detail",
+                               return_value=Forecast(points=points, utc_offset_seconds=28800)), \
              mock.patch.object(aqi_listener, "render_chart", return_value=b"PNGDATA"):
             text, chart = aqi_listener.handle_command("forecast", self._config())
         self.assertEqual(chart, b"PNGDATA")
@@ -187,7 +189,9 @@ class ChartDeliveryTests(unittest.TestCase):
     def test_forecast_falls_back_to_text_when_rendering_fails(self):
         from aqi_bot import ForecastPoint
         points = [ForecastPoint(time=f"2026-08-29T{h:02d}:00", aqi=100 + h) for h in range(12)]
-        with mock.patch.object(aqi_listener, "fetch_forecast", return_value=points), \
+        from aqi_bot import Forecast
+        with mock.patch.object(aqi_listener, "fetch_forecast_detail",
+                               return_value=Forecast(points=points, utc_offset_seconds=28800)), \
              mock.patch.object(aqi_listener, "render_chart", return_value=None):
             text, chart = aqi_listener.handle_command("forecast", self._config())
         self.assertIsNone(chart)
@@ -256,3 +260,36 @@ class ChartRenderingTests(unittest.TestCase):
     def test_flat_series_does_not_collapse_the_axis(self):
         from aqi_chart import render_forecast_chart
         self.assertTrue(render_forecast_chart(self._points([100] * 12), "X"))
+
+
+class NowMarkerTests(unittest.TestCase):
+    def _points(self, count=12, start_hour=16):
+        from aqi_bot import ForecastPoint
+        import datetime as dt
+        base = dt.datetime(2026, 8, 29, start_hour, 0)
+        return [
+            ForecastPoint(time=(base + dt.timedelta(hours=i)).isoformat(timespec="minutes"), aqi=150 + i)
+            for i in range(count)
+        ]
+
+    def test_marker_inside_the_window_renders(self):
+        import datetime as dt
+        from aqi_chart import render_forecast_chart
+        png = render_forecast_chart(self._points(), "X", now=dt.datetime(2026, 8, 29, 18, 30))
+        self.assertTrue(png.startswith(b"\x89PNG"))
+
+    def test_marker_outside_the_window_is_skipped_not_crashed(self):
+        import datetime as dt
+        from aqi_chart import render_forecast_chart
+        for stamp in (dt.datetime(2026, 8, 28, 0, 0), dt.datetime(2026, 9, 5, 0, 0)):
+            with self.subTest(stamp=stamp):
+                self.assertTrue(render_forecast_chart(self._points(), "X", now=stamp))
+
+    def test_no_marker_when_now_is_unknown(self):
+        from aqi_chart import render_forecast_chart
+        self.assertTrue(render_forecast_chart(self._points(), "X", now=None))
+
+    def test_marker_near_the_end_still_renders(self):
+        import datetime as dt
+        from aqi_chart import render_forecast_chart
+        self.assertTrue(render_forecast_chart(self._points(), "X", now=dt.datetime(2026, 8, 30, 2, 50)))

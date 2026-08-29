@@ -27,7 +27,7 @@ from aqi_bot import (
     Reading,
     band_index,
     esc,
-    fetch_forecast,
+    fetch_forecast_detail,
     get_reading,
     load_state,
     send_photo,
@@ -40,7 +40,7 @@ MAX_FORECAST_HOURS = 96
 FORECAST_ROWS = 8
 
 
-def render_chart(points, location, theme):
+def render_chart(points, location, theme, now=None):
     """Render a forecast chart, returning None if charting is unavailable.
 
     matplotlib is an optional extra: without it the bot still answers, just in
@@ -52,7 +52,7 @@ def render_chart(points, location, theme):
         log.info("matplotlib not installed; sending the forecast as text")
         return None
     try:
-        return render_forecast_chart(points, location, theme)
+        return render_forecast_chart(points, location, theme, now=now)
     except Exception:  # noqa: BLE001 - a chart failure must not lose the reply
         log.exception("Chart rendering failed; falling back to text")
         return None
@@ -257,9 +257,19 @@ def handle_command(
 
     if command == "forecast":
         hours = parse_forecast_hours(args or [])
-        points = fetch_forecast(config["lat"], config["lon"], hours)
+        forecast = fetch_forecast_detail(config["lat"], config["lon"], hours)
+        points = forecast.points
         text = describe_forecast(points, config["location"], hours)
-        chart = render_chart(points, config["location"], config["chart_theme"]) if points else None
+        chart = (
+            render_chart(
+                points,
+                config["location"],
+                config["chart_theme"],
+                now=forecast.current_local_time(),
+            )
+            if points
+            else None
+        )
         return text, chart
 
     if command == "now":

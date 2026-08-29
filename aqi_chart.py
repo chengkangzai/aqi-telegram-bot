@@ -66,6 +66,7 @@ def render_forecast_chart(
     location: str,
     theme: str = "light",
     source: str = "Open-Meteo (modelled)",
+    now: datetime | None = None,
 ) -> bytes | None:
     """Render the forecast to PNG bytes, or None if there is nothing to draw."""
     samples = [(_parse(point.time), point.aqi) for point in points]
@@ -154,6 +155,33 @@ def render_forecast_chart(
         color=palette["ink"],
         zorder=5,
     )
+
+    # --- "now" marker ---
+    # Solid, not dashed: a dashed rule reads as a projection or threshold, and
+    # this is a statement of fact about where the present sits.
+    if now is not None and times[0] <= now <= times[-1]:
+        axes.axvline(
+            now,
+            color=palette["secondary"],
+            linewidth=1.2,
+            zorder=2,
+        )
+        # Anchor the label inward when the line is near an edge.
+        elapsed = (now - times[0]).total_seconds()
+        total = max(1.0, (times[-1] - times[0]).total_seconds())
+        near_end = elapsed / total > 0.85
+        axes.annotate(
+            "now",
+            xy=(now, top),
+            xytext=(-5 if near_end else 5, -4),
+            textcoords="offset points",
+            ha="right" if near_end else "left",
+            va="top",
+            fontsize=8,
+            fontweight="bold",
+            color=palette["secondary"],
+            zorder=5,
+        )
 
     # --- chrome, kept recessive ---
     axes.set_ylim(bottom, top)

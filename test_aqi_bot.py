@@ -202,3 +202,41 @@ class EpisodeScenarioTests(unittest.TestCase):
         sent = self._run_episode([130] * 7, repeat_hours="3")
         # hour 0 crossing, then repeats at +3h and +6h
         self.assertEqual(len(sent), 3)
+
+
+class ForecastNowTests(unittest.TestCase):
+    def test_offset_reconstructs_local_time_without_the_host_clock(self):
+        from datetime import datetime, timezone
+        from unittest import mock
+
+        import aqi_bot
+        from aqi_bot import Forecast
+
+        fixed_utc = datetime(2026, 8, 29, 8, 32, tzinfo=timezone.utc)
+
+        class FakeDT(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_utc
+
+        with mock.patch.object(aqi_bot, "datetime", FakeDT):
+            local = Forecast(points=[], utc_offset_seconds=28800).current_local_time()
+        self.assertEqual(local.hour, 16, "UTC+8 should read 16:32 local")
+        self.assertEqual(local.minute, 32)
+        self.assertIsNone(local.tzinfo, "must stay naive to match the API's local stamps")
+
+    def test_missing_offset_yields_no_marker(self):
+        from aqi_bot import Forecast
+        self.assertIsNone(Forecast(points=[], utc_offset_seconds=None).current_local_time())
+
+    def test_fetch_forecast_still_returns_a_bare_list(self):
+        from unittest import mock
+
+        import aqi_bot
+        from aqi_bot import Forecast, ForecastPoint
+
+        sample = Forecast(points=[ForecastPoint(time="2026-08-29T16:00", aqi=100)], now="x")
+        with mock.patch.object(aqi_bot, "fetch_forecast_detail", return_value=sample):
+            result = aqi_bot.fetch_forecast(1.0, 2.0, 12)
+        self.assertIsInstance(result, list)
+        self.assertEqual(result[0].aqi, 100)
