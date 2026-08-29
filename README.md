@@ -150,6 +150,19 @@ To find your chat id, message your bot, then:
 curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | grep -o '"id":[0-9-]*' | head -1
 ```
 
+## Setting secrets
+
+Use the helper rather than editing the file by hand — the value is read from a
+silent prompt, so it never lands in shell history, in `ps` output, or on screen:
+
+```bash
+sudo ./deploy/set-secret.sh WAQI_TOKEN
+sudo ./deploy/set-secret.sh TELEGRAM_BOT_TOKEN
+```
+
+The hourly timer re-reads the env file every run; the listener caches at
+startup, so the script restarts it for you.
+
 ## Security notes
 
 - The env file holds your bot token. `install.sh` writes it `0640 root:aqibot`.
