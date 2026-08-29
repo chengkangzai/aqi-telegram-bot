@@ -402,3 +402,48 @@ class SummaryEdgeCaseTests(unittest.TestCase):
         import numpy as np
         from aqi_chart import _summary_sentence
         self.assertIn("steady", _summary_sentence(np.array([98, 100, 102]), self._times(3), 2, self.NOW))
+
+
+class CommandRegistrationTests(unittest.TestCase):
+    def test_no_republish_when_already_current(self):
+        with mock.patch.object(aqi_listener, "published_commands",
+                               return_value=list(aqi_listener.COMMANDS)), \
+             mock.patch.object(aqi_listener, "api_call") as call:
+            aqi_listener.register_commands("t")
+        call.assert_not_called()
+
+    def test_stale_list_triggers_delete_then_set(self):
+        stale = [("now", "Current air quality reading")]
+        with mock.patch.object(aqi_listener, "published_commands", return_value=stale), \
+             mock.patch.object(aqi_listener, "api_call") as call:
+            aqi_listener.register_commands("t")
+        methods = [c.args[1] for c in call.call_args_list]
+        self.assertEqual(methods, ["deleteMyCommands", "setMyCommands"],
+                         "delete must precede set so clients refetch")
+
+    def test_changed_description_also_republishes(self):
+        drifted = [(name, "old text") for name, _ in aqi_listener.COMMANDS]
+        with mock.patch.object(aqi_listener, "published_commands", return_value=drifted), \
+             mock.patch.object(aqi_listener, "api_call") as call:
+            aqi_listener.register_commands("t")
+        self.assertEqual(len(call.call_args_list), 2)
+
+    def test_unreadable_list_still_republishes(self):
+        with mock.patch.object(aqi_listener, "published_commands", return_value=None), \
+             mock.patch.object(aqi_listener, "api_call") as call:
+            aqi_listener.register_commands("t")
+        self.assertEqual(len(call.call_args_list), 2)
+
+    def test_registration_failure_does_not_raise(self):
+        with mock.patch.object(aqi_listener, "published_commands", return_value=[]), \
+             mock.patch.object(aqi_listener, "api_call", side_effect=OSError("down")):
+            aqi_listener.register_commands("t")  # must not propagate
+
+    def test_every_command_has_a_handler(self):
+        config = dict(BASE_CONFIG)
+        for name, _desc in aqi_listener.COMMANDS:
+            with self.subTest(command=name):
+                if name == "forecast":
+                    continue  # network-bound, covered separately
+                text, _chart = aqi_listener.handle_command(name, config)
+                self.assertNotIn("Unknown command", text)

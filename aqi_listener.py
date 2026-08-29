@@ -94,12 +94,36 @@ def api_call(token: str, method: str, params: dict | None = None, timeout: int =
         return json.loads(response.read().decode("utf-8"))
 
 
-def register_commands(token: str) -> None:
-    """Publish the command list so Telegram offers autocomplete."""
-    payload = [{"command": name, "description": desc} for name, desc in COMMANDS]
+def published_commands(token: str) -> list[tuple[str, str]] | None:
+    """Read back the command list Telegram currently holds, or None on error."""
     try:
+        response = api_call(token, "getMyCommands", timeout=20)
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        log.warning("Could not read published commands: %s", exc)
+        return None
+    if not response.get("ok"):
+        return None
+    return [(entry["command"], entry["description"]) for entry in response.get("result", [])]
+
+
+def register_commands(token: str) -> None:
+    """Publish the command list so Telegram offers autocomplete.
+
+    Deletes before setting when the list has changed. Clients cache the command
+    list aggressively, and a plain setMyCommands does not reliably bump the
+    version they refetch on — which is how a newly added command can be live on
+    the server yet absent from the menu for days.
+    """
+    desired = list(COMMANDS)
+    if published_commands(token) == desired:
+        log.info("Command list already current (%d commands)", len(desired))
+        return
+
+    payload = [{"command": name, "description": desc} for name, desc in desired]
+    try:
+        api_call(token, "deleteMyCommands", timeout=20)
         api_call(token, "setMyCommands", {"commands": json.dumps(payload)}, timeout=20)
-        log.info("Registered %d commands with Telegram", len(payload))
+        log.info("Republished %d commands with Telegram", len(payload))
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         log.warning("Could not register commands: %s", exc)
 
