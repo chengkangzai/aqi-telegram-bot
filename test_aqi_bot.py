@@ -240,3 +240,45 @@ class ForecastNowTests(unittest.TestCase):
             result = aqi_bot.fetch_forecast(1.0, 2.0, 12)
         self.assertIsInstance(result, list)
         self.assertEqual(result[0].aqi, 100)
+
+
+class RelativePhraseTests(unittest.TestCase):
+    import datetime as _dt
+    NOW = _dt.datetime(2026, 8, 29, 16, 30)
+
+    def phrase(self, **delta):
+        import datetime as dt
+        from aqi_bot import relative_phrase
+        return relative_phrase(self.NOW + dt.timedelta(**delta), self.NOW)
+
+    def test_imminent(self):
+        self.assertEqual(self.phrase(minutes=5), "right about now")
+
+    def test_minutes_round_to_ten(self):
+        self.assertEqual(self.phrase(minutes=28), "in about 30 minutes")
+        self.assertEqual(self.phrase(minutes=43), "in about 40 minutes")
+
+    def test_about_an_hour(self):
+        self.assertEqual(self.phrase(minutes=65), "in about an hour")
+
+    def test_hours_stay_bare_when_near(self):
+        self.assertEqual(self.phrase(hours=3), "in about 3 hours")
+        self.assertNotIn("(", self.phrase(hours=5))
+
+    def test_distant_hours_gain_a_clock_time(self):
+        # "in about 14 hours" alone is hard to picture, so anchor it.
+        self.assertEqual(self.phrase(hours=14), "in about 14 hours (06:30)")
+
+    def test_about_a_day(self):
+        self.assertIn("about a day", self.phrase(hours=26))
+
+    def test_multiple_days(self):
+        self.assertIn("about 3 days", self.phrase(hours=72))
+
+    def test_past_targets_read_as_now(self):
+        self.assertEqual(self.phrase(hours=-2), "right about now")
+
+    def test_unknown_now_falls_back_to_the_clock(self):
+        import datetime as dt
+        from aqi_bot import relative_phrase
+        self.assertEqual(relative_phrase(dt.datetime(2026, 8, 29, 19, 0), None), "at 19:00")

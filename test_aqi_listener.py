@@ -293,3 +293,112 @@ class NowMarkerTests(unittest.TestCase):
         import datetime as dt
         from aqi_chart import render_forecast_chart
         self.assertTrue(render_forecast_chart(self._points(), "X", now=dt.datetime(2026, 8, 30, 2, 50)))
+
+
+class HeadlineTests(unittest.TestCase):
+    import datetime as _dt
+    NOW = _dt.datetime(2026, 8, 29, 16, 30)
+
+    def _times(self, count, start_hour=16):
+        import datetime as dt
+        base = dt.datetime(2026, 8, 29, start_hour, 0)
+        return [base + dt.timedelta(hours=i) for i in range(count)]
+
+    def test_rising_window_names_both_turning_points(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        values = np.array([160, 190, 217, 180, 153])
+        text = _summary_sentence(values, self._times(5), 2, self.NOW)
+        self.assertIn("Worsens to 217", text)
+        self.assertIn("then eases to 153", text)
+
+    def test_already_peaking_reads_as_easing(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        values = np.array([217, 190, 160, 153])
+        text = _summary_sentence(values, self._times(4), 0, self.NOW)
+        self.assertIn("Easing from here", text)
+        self.assertNotIn("Worsens", text)
+
+    def test_sentence_uses_relative_time(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        values = np.array([160, 217, 153])
+        text = _summary_sentence(values, self._times(3), 1, self.NOW)
+        self.assertIn("in about", text)
+        self.assertNotIn("around 17:00", text)
+
+    def test_sentence_falls_back_to_clock_without_now(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        values = np.array([160, 217, 153])
+        text = _summary_sentence(values, self._times(3), 1, None)
+        self.assertIn("at 17:00", text)
+
+    def test_long_band_name_is_shortened_for_the_margin(self):
+        from aqi_chart import _short
+        self.assertEqual(_short("Unhealthy for Sensitive Groups"), "Sensitive groups")
+        self.assertEqual(_short("Unhealthy"), "Unhealthy")
+
+
+class SummaryToneTests(unittest.TestCase):
+    import datetime as _dt
+    NOW = _dt.datetime(2026, 8, 29, 16, 30)
+
+    def _times(self, count):
+        import datetime as dt
+        base = dt.datetime(2026, 8, 29, 16, 0)
+        return [base + dt.timedelta(hours=i) for i in range(count)]
+
+    def test_rise_within_one_band_is_not_called_worsening(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        # 22 -> 41 is a near-doubling but never leaves Good.
+        text = _summary_sentence(np.array([22, 35, 41, 20]), self._times(4), 2, self.NOW)
+        self.assertIn("Rises to 41", text)
+        self.assertNotIn("Worsens", text)
+
+    def test_crossing_into_a_worse_band_is_called_worsening(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        text = _summary_sentence(np.array([90, 120, 160, 95]), self._times(4), 2, self.NOW)
+        self.assertIn("Worsens to 160", text)
+
+
+class SummaryEdgeCaseTests(unittest.TestCase):
+    import datetime as _dt
+    NOW = _dt.datetime(2026, 8, 29, 16, 30)
+
+    def _times(self, count):
+        import datetime as dt
+        base = dt.datetime(2026, 8, 29, 16, 0)
+        return [base + dt.timedelta(hours=i) for i in range(count)]
+
+    def test_trough_is_taken_after_the_peak_not_globally(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        # Global minimum is the first sample; quoting it would describe the present.
+        values = np.array([30, 130, 310, 180, 70])
+        text = _summary_sentence(values, self._times(5), 2, self.NOW)
+        self.assertIn("then eases to 70", text)
+        self.assertNotIn("eases to 30", text)
+
+    def test_still_climbing_when_the_peak_is_last(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        values = np.array([100, 140, 180, 220])
+        text = _summary_sentence(values, self._times(4), 3, self.NOW)
+        self.assertIn("still climbing", text)
+
+    def test_flat_series_reads_as_steady(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        text = _summary_sentence(np.array([100, 101, 100, 102]), self._times(4), 3, self.NOW)
+        self.assertIn("Holding steady around 100", text)
+        self.assertNotIn("Easing", text)
+        self.assertNotIn("climbing", text)
+
+    def test_near_flat_still_reads_as_steady(self):
+        import numpy as np
+        from aqi_chart import _summary_sentence
+        self.assertIn("steady", _summary_sentence(np.array([98, 100, 102]), self._times(3), 2, self.NOW))

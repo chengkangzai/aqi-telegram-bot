@@ -382,6 +382,38 @@ def send_photo(token: str, chat_id: str, photo: bytes, caption: str) -> None:
         raise RuntimeError(f"Telegram rejected the photo: {payload}")
 
 
+def relative_phrase(target: datetime, now: datetime | None) -> str:
+    """Describe when `target` happens relative to `now`, in plain language.
+
+    Falls back to a clock time when `now` is unknown, and appends one for
+    anything far enough out that "in about 18 hours" is hard to picture.
+    """
+    if now is None:
+        return f"at {target:%H:%M}"
+
+    seconds = (target - now).total_seconds()
+    if seconds <= 600:
+        return "right about now"
+
+    minutes = seconds / 60
+    if minutes < 50:
+        return f"in about {int(round(minutes / 10) * 10)} minutes"
+    hours = minutes / 60
+    if hours < 1.5:
+        return "in about an hour"
+    if hours < 22:
+        phrase = f"in about {int(round(hours))} hours"
+    elif hours < 36:
+        phrase = "in about a day"
+    else:
+        phrase = f"in about {int(round(hours / 24))} days"
+
+    # Past a few hours the relative form alone stops being concrete.
+    if hours > 6:
+        return f"{phrase} ({target:%H:%M})"
+    return phrase
+
+
 def compose_message(
     reading: Reading,
     band: int,

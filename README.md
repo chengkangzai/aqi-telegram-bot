@@ -66,16 +66,27 @@ whether an alert fires.
 Only user ids in `TELEGRAM_ALLOWED_USER_IDS` (default: `TELEGRAM_CHAT_ID`) get a
 response. Anyone else who finds the bot is logged and ignored.
 
-`/forecast` replies with a rendered PNG. The chart is one line in neutral ink
-over recessive AQI severity bands, each labelled — so severity is never carried
-by colour alone — with only the peak direct-labelled. The y-axis anchors one
-band below the data rather than at zero: the bands already supply absolute
-context, and a forced zero baseline squeezes a 140–220 day into the top third of
-the canvas. `AQI_CHART_THEME=light|dark` picks the palette; both are chosen
-against their own surface rather than one being an inversion of the other. A
-solid rule marks the current moment, reconstructed from UTC plus the provider's
-reported offset rather than read off the host clock — the two disagree whenever
-the host and the watched location sit in different timezones.
+`/forecast` replies with a rendered PNG built around one split: the **headline**
+owns *how bad is it* and the **chart** owns *how does it change*. Trying to make
+the plot do both is what made earlier versions hard to read.
+
+The headline gives the current reading large, in its band colour, with the band
+name beside it (never colour alone), plus a plain-language sentence:
+
+> **161**
+> UNHEALTHY · RIGHT NOW
+> Worsens to 217 in about 2 hours, then eases to 153 in about 6 hours (23:00).
+
+Times are relative, since "around 19:00" makes the reader do arithmetic. Past
+six hours a clock time is appended, because "in about 14 hours" is not
+something you can picture. The verb tracks reality: a rise that stays inside one
+band "rises" rather than "worsens", a flat window "holds steady", and the trough
+is taken from after the peak so it never describes a value already in the past.
+
+The chart is then free to stay zoomed and recessive — one neutral line over
+labelled severity bands, anchored a band below the data rather than at zero,
+with a solid rule marking now. `AQI_CHART_THEME=light|dark` picks the palette;
+both are chosen against their own surface rather than one being an inversion.
 
 Charting needs `python3-matplotlib` (the installer adds it). Without it, or if
 rendering throws, `/forecast` degrades to the same summary in text — the reply
