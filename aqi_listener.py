@@ -30,6 +30,7 @@ from aqi_bot import (
     fetch_forecast_detail,
     get_reading,
     load_state,
+    pm25_lines,
     send_photo,
     send_telegram,
 )
@@ -157,8 +158,7 @@ def describe_reading(reading: Reading, location: str) -> str:
         ADVICE.get(band, ""),
         "",
     ]
-    if reading.pm25 is not None:
-        lines.append(f"PM2.5: {reading.pm25}")
+    lines.extend(pm25_lines(reading))
     if reading.dominant:
         lines.append(f"Dominant pollutant: {esc(reading.dominant)}")
     lines.append(f"Location: {esc(location)}")

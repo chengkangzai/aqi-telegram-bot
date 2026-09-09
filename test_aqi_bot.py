@@ -2,7 +2,8 @@
 
 import unittest
 
-from aqi_bot import BANDS, band_index, compose_message, settle_band, Reading
+from aqi_bot import (BANDS, Reading, band_index, compose_message, pm25_lines,
+                     pm25_to_us_aqi, settle_band, us_epa_aqi)
 
 
 class BandIndexTests(unittest.TestCase):
@@ -306,3 +307,78 @@ class RelativePhraseDayAnchorTests(unittest.TestCase):
     def test_threshold_boundary(self):
         self.assertNotIn("Sun", self.phrase(hours=22))
         self.assertIn("Sun", self.phrase(hours=23))
+
+
+class Pm25ToUsAqiTests(unittest.TestCase):
+    def test_breakpoint_edges_land_on_band_edges(self):
+        cases = [(0.0, 0), (9.0, 50), (9.1, 51), (35.4, 100),
+                 (35.5, 101), (55.4, 150), (55.5, 151), (125.4, 200)]
+        for concentration, expected in cases:
+            with self.subTest(concentration=concentration):
+                self.assertEqual(pm25_to_us_aqi(concentration), expected)
+
+    def test_interpolates_within_a_band(self):
+        # Midway through 9.1-35.4 should be midway through 51-100.
+        self.assertEqual(pm25_to_us_aqi((9.1 + 35.4) / 2), 76)
+
+    def test_off_the_top_of_the_scale_clamps(self):
+        self.assertEqual(pm25_to_us_aqi(9999), 500)
+
+    def test_negative_concentration_is_rejected(self):
+        with self.assertRaises(ValueError):
+            pm25_to_us_aqi(-1)
+
+
+class UsEpaAqiTests(unittest.TestCase):
+    """The Malaysian DOE passthrough, and the shape every other country sends."""
+
+    MALAYSIAN = {
+        "aqi": {"v": 77}, "pm25": {"v": 141}, "pm10": {"v": 40},
+        "co": {"v": 0.1}, "no2": {"v": 8.9}, "o3": {"v": 4.2}, "so2": {"v": 1.5},
+    }
+    PLAIN = {"pm25": {"v": 93}, "pm10": {"v": 35}, "o3": {"v": 12}}
+
+    def test_national_index_passthrough_is_corrected_to_the_sub_index(self):
+        # Putrajaya really reported these: headline 77 (Malaysian API) while its
+        # own PM2.5 sub-index was 141 (US EPA) - Moderate printed for USG.
+        self.assertEqual(us_epa_aqi(77, self.MALAYSIAN), 141)
+
+    def test_the_correction_crosses_the_alert_floor(self):
+        # The default AQI_ALERT_FLOOR_BAND is 2, so this is the difference
+        # between total silence and an alert, not merely a wrong label.
+        self.assertEqual(band_index(77), 1)
+        self.assertEqual(band_index(us_epa_aqi(77, self.MALAYSIAN)), 2)
+
+    def test_a_normal_station_is_left_alone(self):
+        self.assertEqual(us_epa_aqi(93, self.PLAIN), 93)
+
+    def test_headline_above_the_sub_indices_is_kept(self):
+        # Ozone or another pollutant can legitimately drive the composite.
+        self.assertEqual(us_epa_aqi(120, self.PLAIN), 120)
+
+    def test_gas_concentrations_never_raise_the_result(self):
+        # A CO of 0.1 is ppm, not a sub-index; only pm25/pm10 are comparable.
+        only_gases = {"co": {"v": 0.1}, "no2": {"v": 8.9}}
+        self.assertEqual(us_epa_aqi(77, only_gases), 77)
+
+    def test_missing_iaqi_falls_back_to_the_headline(self):
+        self.assertEqual(us_epa_aqi(64, {}), 64)
+
+    def test_non_numeric_sub_indices_are_ignored(self):
+        self.assertEqual(us_epa_aqi(50, {"pm25": {"v": "-"}}), 50)
+
+    def test_pm10_can_drive_the_correction(self):
+        self.assertEqual(us_epa_aqi(60, {"pm10": {"v": 118}}), 118)
+
+
+class Pm25LinesTests(unittest.TestCase):
+    def test_a_concentration_is_labelled_with_its_unit(self):
+        reading = Reading(aqi=101, source="Open-Meteo (modelled)", pm25=41.6)
+        self.assertEqual(pm25_lines(reading), ["PM2.5: 41.6 ug/m3"])
+
+    def test_a_sub_index_is_labelled_as_a_sub_index(self):
+        reading = Reading(aqi=141, source="WAQI ground station", pm25_index=141)
+        self.assertEqual(pm25_lines(reading), ["PM2.5 sub-index: 141"])
+
+    def test_neither_renders_nothing(self):
+        self.assertEqual(pm25_lines(Reading(aqi=50, source="x")), [])

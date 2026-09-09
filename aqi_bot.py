@@ -34,6 +34,20 @@ BANDS: list[tuple[int, int, str, str]] = [
     (301, 10_000, "Hazardous", "🟤"),
 ]
 
+# US EPA PM2.5 breakpoints (2024 revision): (conc_low, conc_high, aqi_low, aqi_high).
+# The single definition of the PM2.5 -> AQI scale in this codebase. Note the EPA
+# index is defined on a 24-hour average, so feeding it an instantaneous
+# concentration understates a sharp spike; we only do that as a last resort when
+# a provider gives us a concentration but no index of its own.
+PM25_BREAKPOINTS: list[tuple[float, float, int, int]] = [
+    (0.0, 9.0, 0, 50),
+    (9.1, 35.4, 51, 100),
+    (35.5, 55.4, 101, 150),
+    (55.5, 125.4, 151, 200),
+    (125.5, 225.4, 201, 300),
+    (225.5, 500.0, 301, 500),
+]
+
 ADVICE = {
     0: "Air quality is fine. Windows open.",
     1: "Acceptable. Unusually sensitive people may want to take it easy outdoors.",
@@ -60,6 +74,9 @@ class Reading:
     dominant: str | None = None
     observed_at: str | None = None
     pm25: float | None = None
+    """PM2.5 concentration in ug/m3, when the provider reports one."""
+    pm25_index: int | None = None
+    """PM2.5 AQI sub-index, when the provider reports the index instead."""
 
 
 @dataclass
@@ -109,11 +126,88 @@ def band_index(aqi: int) -> int:
     return len(BANDS) - 1
 
 
+def pm25_lines(reading: Reading) -> list[str]:
+    """Render the PM2.5 detail, naming which quantity is actually being shown.
+
+    A concentration and a sub-index are different numbers on different scales;
+    printing a bare "PM2.5: 93" for either invites exactly the confusion that
+    made the headline-AQI bug hard to see.
+    """
+    if reading.pm25 is not None:
+        return [f"PM2.5: {reading.pm25} ug/m3"]
+    if reading.pm25_index is not None:
+        return [f"PM2.5 sub-index: {reading.pm25_index}"]
+    return []
+
+
+def pm25_to_us_aqi(concentration: float) -> int:
+    """Convert a PM2.5 concentration in ug/m3 to a US EPA AQI sub-index."""
+    if concentration < 0:
+        raise ValueError("PM2.5 concentration cannot be negative")
+
+    for conc_low, conc_high, aqi_low, aqi_high in PM25_BREAKPOINTS:
+        if concentration <= conc_high:
+            span = conc_high - conc_low
+            if span <= 0:
+                return aqi_low
+            offset = max(concentration - conc_low, 0)
+            return int(round(aqi_low + offset * (aqi_high - aqi_low) / span))
+
+    return PM25_BREAKPOINTS[-1][3]
+
+
 def http_get_json(url: str) -> dict:
     """GET a URL and decode the JSON body."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+# Sub-indices WAQI reliably publishes on the US EPA scale. The gas entries are
+# left out on purpose: stations that pass through a national index also pass
+# through raw gas concentrations (a CO of 0.1 is ppm, not a sub-index), so they
+# cannot be compared against an AQI without knowing which a given feed means.
+COMPARABLE_SUB_INDICES = ("pm25", "pm10")
+
+
+def _sub_index(iaqi: dict, key: str) -> int | None:
+    """Read one numeric sub-index out of a WAQI iaqi block."""
+    value = (iaqi.get(key) or {}).get("v")
+    if isinstance(value, (int, float)):
+        return int(round(value))
+    return None
+
+
+def us_epa_aqi(headline: int, iaqi: dict, station: str | None = None) -> int:
+    """Return the true US EPA AQI for a WAQI feed.
+
+    The US EPA AQI is by definition the highest of the pollutant sub-indices, so
+    a headline lower than the highest sub-index means the field is not a US EPA
+    composite at all. Malaysian DOE stations do exactly this: they publish the
+    national API, whose PM2.5 band 51-100 spans 35-75 ug/m3 where the US EPA one
+    spans 9-35, and WAQI passes it straight through. Trusting it understated
+    Putrajaya as 77 when that station's own PM2.5 sub-index was 141: Moderate
+    reported for air that is Unhealthy for Sensitive Groups. At the default
+    alert floor of band 2 that is the difference between silence and a message.
+    """
+    sub_indices = [
+        value
+        for value in (_sub_index(iaqi, key) for key in COMPARABLE_SUB_INDICES)
+        if value is not None
+    ]
+    if not sub_indices:
+        return headline
+
+    highest = max(sub_indices)
+    if highest <= headline:
+        return headline
+
+    log.info(
+        "Headline AQI %s is below the highest sub-index %s at %s; "
+        "treating it as a national index and using the sub-index",
+        headline, highest, station or "unknown station",
+    )
+    return highest
 
 
 def fetch_waqi(lat: float, lon: float, token: str) -> Reading | None:
@@ -130,19 +224,23 @@ def fetch_waqi(lat: float, lon: float, token: str) -> Reading | None:
         return None
 
     data = payload.get("data") or {}
-    aqi = data.get("aqi")
-    if not isinstance(aqi, int):
-        log.warning("WAQI returned a non-numeric AQI (%r) - station likely offline", aqi)
+    headline = data.get("aqi")
+    if not isinstance(headline, int):
+        log.warning("WAQI returned a non-numeric AQI (%r) - station likely offline", headline)
         return None
 
-    pm25 = (data.get("iaqi") or {}).get("pm25", {}).get("v")
+    iaqi = data.get("iaqi") or {}
+    station = (data.get("city") or {}).get("name")
+    aqi = us_epa_aqi(headline, iaqi, station)
+
+    pm25_index = _sub_index(iaqi, "pm25")
     return Reading(
         aqi=aqi,
         source="WAQI ground station",
-        station=(data.get("city") or {}).get("name"),
+        station=station,
         dominant=data.get("dominentpol"),
         observed_at=(data.get("time") or {}).get("s"),
-        pm25=pm25 if isinstance(pm25, (int, float)) else None,
+        pm25_index=pm25_index,
     )
 
 
@@ -165,15 +263,27 @@ def fetch_open_meteo(lat: float, lon: float) -> Reading | None:
 
     current = payload.get("current") or {}
     aqi = current.get("us_aqi")
+    pm25 = current.get("pm2_5")
+
+    # Open-Meteo computes us_aqi on the EPA 24-hour average, which is the
+    # correct definition, so prefer it. Deriving the index from the current
+    # concentration is a fallback that keeps the reading alive when the field
+    # is missing rather than a second opinion; flag it so the two are never
+    # confused when comparing sources.
+    source = "Open-Meteo (modelled)"
     if aqi is None:
-        log.warning("Open-Meteo response carried no us_aqi field")
-        return None
+        if not isinstance(pm25, (int, float)):
+            log.warning("Open-Meteo response carried neither us_aqi nor pm2_5")
+            return None
+        aqi = pm25_to_us_aqi(float(pm25))
+        source = "Open-Meteo (modelled, AQI derived from PM2.5)"
+        log.info("Open-Meteo omitted us_aqi; derived AQI %s from PM2.5 %s", aqi, pm25)
 
     return Reading(
         aqi=int(round(float(aqi))),
-        source="Open-Meteo (modelled)",
+        source=source,
         observed_at=current.get("time"),
-        pm25=current.get("pm2_5"),
+        pm25=float(pm25) if isinstance(pm25, (int, float)) else None,
     )
 
 
@@ -446,8 +556,7 @@ def compose_message(
 
     lines = [headline, "", movement, ADVICE.get(band, ""), ""]
 
-    if reading.pm25 is not None:
-        lines.append(f"PM2.5: {reading.pm25}")
+    lines.extend(pm25_lines(reading))
     if reading.dominant:
         lines.append(f"Dominant pollutant: {esc(reading.dominant)}")
     lines.append(f"Location: {esc(location)}")
