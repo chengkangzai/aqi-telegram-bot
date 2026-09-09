@@ -34,6 +34,7 @@ from aqi_bot import (
     send_photo,
     send_telegram,
 )
+from aqi_briefing import compose_briefing, gather
 
 DEFAULT_FORECAST_HOURS = 24
 MIN_FORECAST_HOURS = 6
@@ -65,6 +66,7 @@ MAX_BACKOFF_SECONDS = 120
 
 COMMANDS = [
     ("now", "Current air quality reading"),
+    ("briefing", "Today's weather and air in one message"),
     ("forecast", "Hourly outlook, e.g. /forecast 48"),
     ("status", "Last check, band and settings"),
     ("where", "Which location is being watched"),
@@ -295,6 +297,13 @@ def handle_command(
             else None
         )
         return text, chart
+
+    if command == "briefing":
+        weather, reading, points = gather(config["lat"], config["lon"], config["waqi_token"])
+        if weather is None and reading is None and not points:
+            return "Could not reach any source just now. Try again shortly.", None
+        local_now = weather.current_local_time() if weather else None
+        return compose_briefing(weather, reading, points, config["location"], local_now), None
 
     if command == "now":
         try:

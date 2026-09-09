@@ -1,0 +1,36 @@
+[Unit]
+Description=AQI Telegram morning briefing (one send)
+Documentation=https://github.com/chengkangzai/aqi-telegram-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aqibot
+Group=aqibot
+EnvironmentFile=/etc/aqi-bot/aqi-bot.env
+ExecStart=/usr/bin/python3 /opt/aqi-bot/aqi_briefing.py
+
+StateDirectory=aqi-bot
+StateDirectoryMode=0750
+
+# Outbound HTTPS and nothing else. The briefing never writes state, so it does
+# not even need the state directory writable - it is granted only to keep the
+# three units interchangeable under the same account.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+TimeoutStartSec=120

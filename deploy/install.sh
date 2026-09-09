@@ -19,6 +19,8 @@ install -d -m 0755 "$APP_DIR"
 install -m 0755 "${REPO_DIR}/aqi_bot.py" "${APP_DIR}/aqi_bot.py"
 install -m 0755 "${REPO_DIR}/aqi_listener.py" "${APP_DIR}/aqi_listener.py"
 install -m 0755 "${REPO_DIR}/aqi_chart.py" "${APP_DIR}/aqi_chart.py"
+install -m 0755 "${REPO_DIR}/aqi_weather.py" "${APP_DIR}/aqi_weather.py"
+install -m 0755 "${REPO_DIR}/aqi_briefing.py" "${APP_DIR}/aqi_briefing.py"
 
 echo "==> Checking chart support"
 if python3 -c "import matplotlib" 2>/dev/null; then
@@ -45,13 +47,29 @@ echo "==> Installing systemd units"
 install -m 0644 "${REPO_DIR}/deploy/aqi-bot.service" /etc/systemd/system/aqi-bot.service
 install -m 0644 "${REPO_DIR}/deploy/aqi-bot.timer" /etc/systemd/system/aqi-bot.timer
 install -m 0644 "${REPO_DIR}/deploy/aqi-bot-listener.service" /etc/systemd/system/aqi-bot-listener.service
+install -m 0644 "${REPO_DIR}/deploy/aqi-bot-briefing.service" /etc/systemd/system/aqi-bot-briefing.service
+install -m 0644 "${REPO_DIR}/deploy/aqi-bot-briefing.timer" /etc/systemd/system/aqi-bot-briefing.timer
+
+echo "==> Checking the briefing schedule"
+BRIEF_CAL="$(sed -n 's/^OnCalendar=//p' "${REPO_DIR}/deploy/aqi-bot-briefing.timer")"
+if systemd-analyze calendar "$BRIEF_CAL" >/dev/null 2>&1; then
+  echo "    Next briefing: $(systemd-analyze calendar "$BRIEF_CAL" | sed -n 's/^ *Next elapse: //p')"
+else
+  echo "    WARNING: this systemd cannot parse '${BRIEF_CAL}'." >&2
+  echo "    Named timezones in OnCalendar need systemd 252+ (Debian 12+)." >&2
+  echo "    Drop the timezone from the OnCalendar line and set the host clock instead:" >&2
+  echo "      timedatectl set-timezone Asia/Kuala_Lumpur" >&2
+fi
+
 systemctl daemon-reload
 systemctl enable --now aqi-bot.timer
+systemctl enable --now aqi-bot-briefing.timer
 systemctl enable aqi-bot-listener.service
 
 echo
 echo "Done. Useful next steps:"
 echo "  edit    \$EDITOR ${CONF_DIR}/aqi-bot.env"
 echo "  test    systemctl start aqi-bot.service && journalctl -u aqi-bot -n 30 --no-pager"
-echo "  status  systemctl list-timers aqi-bot.timer"
+echo "  brief   systemctl start aqi-bot-briefing.service && journalctl -u aqi-bot-briefing -n 30 --no-pager"
+echo "  status  systemctl list-timers 'aqi-bot*'"
 echo "  listener systemctl start aqi-bot-listener && journalctl -u aqi-bot-listener -f"

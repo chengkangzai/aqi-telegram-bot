@@ -1,10 +1,11 @@
 # aqi-telegram-bot
 
 An hourly air-quality watchdog that messages you on Telegram when the AQI where
-you live crosses into a worse category — and again when it recovers.
+you live crosses into a worse category — and again when it recovers, plus a
+short weather-and-air briefing every morning.
 
-It is deliberately small: one Python file, no third-party dependencies, a
-systemd timer, and a JSON state file.
+It is deliberately small: standard-library Python only, systemd timers, and a
+JSON state file. `matplotlib` is an optional extra, and only for charts.
 
 ## Why band changes instead of hourly readings
 
@@ -45,6 +46,63 @@ A worked example — a real-shaped episode at hourly checks produces 11 messages
 across 19 hours, and none at all during the clean stretches at either end. See
 `EpisodeScenarioTests` for the exact expectations.
 
+## The morning briefing
+
+At 10:00 local time every day the bot sends one short message covering the
+weather and the air together, whether or not anything is wrong:
+
+> 🌦️ **Good morning — Cheras**
+> Wednesday, 9 September
+>
+> Now: 26.2°C, feels 31.7°C, Drizzle
+> Today: 24°C to 35°C, Thunderstorm
+> Rain: 100% chance, 20.8 mm
+> UV index: 8 at peak
+> Sun: 07:05 to 19:14
+>
+> 🟣 Air: AQI 218 — Very Unhealthy
+> Peak today: 🟣 AQI 222 at 19:00
+>
+> Take an umbrella.
+> UV is harsh around midday. Cover up outdoors.
+> Avoid outdoor exertion. Keep windows shut and run a purifier.
+
+This is the opposite job from the watchdog, which is why it is a separate unit
+on a separate timer. The watchdog is exception-driven and says nothing when the
+air is fine. The briefing is unconditional: you read it once, plan the day, and
+throw it away.
+
+The closing lines are the point. A list of numbers makes you do the
+interpretation every morning, so anything that crosses a threshold earns one
+plain sentence, and when nothing does it says *Nothing to plan around.*
+The air advice follows the **forecast peak**, not just the reading at 10:00 —
+clean air now and a bad afternoon is exactly the case where knowing early
+changes what you do.
+
+Weather comes from Open-Meteo's forecast API, keyless like the existing AQI
+fallback, so the briefing adds no new credential. The two halves fail
+independently: if the weather lookup dies you still get the air, and vice
+versa. Only when everything fails does the run exit non-zero and send nothing.
+
+The schedule lives in `deploy/aqi-bot-briefing.timer`:
+
+```
+OnCalendar=*-*-* 10:00:00 Asia/Kuala_Lumpur
+```
+
+The timezone is named there rather than inherited from the host clock, so the
+briefing cannot drift because someone ran `timedatectl` on the container. Edit
+the line to move the slot, then `systemctl daemon-reload`. Named timezones in
+`OnCalendar` need systemd 252 or newer; `install.sh` checks and tells you what
+to do instead if yours is older.
+
+It is deliberately **not** `Persistent=true`. A briefing that fires at 16:00
+because the host was asleep all morning is stale news, not a catch-up.
+
+Send it to a different chat than the alerts by setting `BRIEFING_CHAT_ID`.
+`/briefing` renders the same message on demand at any hour, and greets you
+according to the actual time of day.
+
 ## Talking to it
 
 Alerts are pushed to you automatically, but you can also query on demand. The
@@ -53,6 +111,7 @@ listener registers these with Telegram, so they autocomplete in the `/` menu:
 | Command | Does |
 | --- | --- |
 | `/now` | Fetch a fresh reading and reply immediately |
+| `/briefing` | Today's weather and air in one message, on demand |
 | `/forecast` | Hourly outlook as a chart. `/forecast 48` widens it (6–96h) |
 | `/status` | Last completed check, current band, and active settings |
 | `/where` | Which location and coordinates are being watched |
@@ -119,6 +178,7 @@ sudo ./deploy/install.sh
 sudo $EDITOR /etc/aqi-bot/aqi-bot.env   # fill in token, chat id, coordinates
 sudo systemctl start aqi-bot.service    # fire one check immediately
 sudo systemctl start aqi-bot-listener   # start answering commands
+sudo systemctl start aqi-bot-briefing   # send a briefing now, to check it
 journalctl -u aqi-bot -n 30 --no-pager
 ```
 

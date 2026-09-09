@@ -1,0 +1,20 @@
+[Unit]
+Description=Send the AQI Telegram briefing every morning
+Documentation=https://github.com/chengkangzai/aqi-telegram-bot
+
+[Timer]
+# Named timezone rather than host local time: the container's clock setting
+# should not silently move when the briefing arrives. Edit the zone here if you
+# move. Requires systemd 252 or newer, which is Debian 12 and up.
+OnCalendar=*-*-* 10:00:00 Asia/Kuala_Lumpur
+# A briefing is read once and thrown away, so a randomised delay only makes it
+# arrive at an unpredictable time. Keep it small and honest.
+RandomizedDelaySec=60
+AccuracySec=1min
+# Deliberately NOT Persistent. A briefing that fires at 16:00 because the host
+# was asleep all morning is stale news, not a catch-up.
+Persistent=false
+Unit=aqi-bot-briefing.service
+
+[Install]
+WantedBy=timers.target
