@@ -33,6 +33,12 @@ elif command -v apt-get >/dev/null; then
 else
   echo "    No matplotlib and no apt-get; /forecast will reply in text instead."
 fi
+if command -v apt-get >/dev/null && ! dpkg -s fonts-ibm-plex &>/dev/null; then
+  echo "    Installing fonts-ibm-plex for chart typography..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fonts-ibm-plex >/dev/null 2>&1 \
+    && echo "    Installed." \
+    || echo "    Install failed - charts will use DejaVu Sans instead."
+fi
 
 echo "==> Preparing ${CONF_DIR}"
 install -d -m 0750 -o root -g aqibot "$CONF_DIR"
