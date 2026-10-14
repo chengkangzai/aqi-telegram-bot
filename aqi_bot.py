@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 USER_AGENT = "aqi-telegram-bot/1.0 (+https://github.com/chengkangzai/aqi-telegram-bot)"
 HTTP_TIMEOUT = 20
@@ -391,6 +391,25 @@ def parse_timestamp(value: object) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def pause_until(raw: str | None, now: datetime, local_tz: tzinfo | None = None) -> datetime | None:
+    """Return when AQI_PAUSE_UNTIL lifts, or None if nothing should be held back.
+
+    Accepts an ISO date ("2026-10-21", resumes at local midnight) or date-time;
+    a value without an offset is read as local time. An unreadable value is
+    logged and ignored rather than obeyed: a typo must never silence alerts.
+    """
+    if raw is None or not raw.strip():
+        return None
+    try:
+        until = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        log.warning("Ignoring unreadable AQI_PAUSE_UNTIL=%r", raw)
+        return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=local_tz) if local_tz else until.astimezone()
+    return until if now < until else None
+
+
 def repeat_is_due(last_alert_at: object, repeat_hours: int, now: datetime) -> bool:
     """Decide whether enough time has passed to re-send an ongoing alert.
 
@@ -592,6 +611,13 @@ def main() -> int:
     except (ConfigError, ValueError) as exc:
         log.error("Configuration error: %s", exc)
         return 2
+
+    # Checked before fetching so a paused run leaves state untouched: when the
+    # pause lifts, the first run compares against the last band actually seen.
+    paused = pause_until(os.environ.get("AQI_PAUSE_UNTIL"), datetime.now(timezone.utc))
+    if paused:
+        log.info("Paused until %s; skipping this check", paused.isoformat(timespec="minutes"))
+        return 0
 
     waqi_token = os.environ.get("WAQI_TOKEN", "").strip() or None
     location = os.environ.get("AQI_LOCATION_NAME", f"{lat},{lon}")

@@ -18,7 +18,7 @@ import logging
 import os
 import sys
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aqi_bot import (
     ADVICE,
@@ -30,6 +30,7 @@ from aqi_bot import (
     esc,
     fetch_forecast_detail,
     get_reading,
+    pause_until,
     require_env,
     send_telegram,
 )
@@ -254,6 +255,11 @@ def main() -> int:
     except (ConfigError, ValueError) as exc:
         log.error("Configuration error: %s", exc)
         return 2
+
+    paused = pause_until(os.environ.get("AQI_PAUSE_UNTIL"), datetime.now(timezone.utc))
+    if paused:
+        log.info("Paused until %s; no briefing today", paused.isoformat(timespec="minutes"))
+        return 0
 
     waqi_token = os.environ.get("WAQI_TOKEN", "").strip() or None
     location = os.environ.get("AQI_LOCATION_NAME", f"{lat},{lon}")

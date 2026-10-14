@@ -2,8 +2,10 @@
 
 import unittest
 
-from aqi_bot import (BANDS, Reading, band_index, compose_message, pm25_lines,
-                     pm25_to_us_aqi, settle_band, us_epa_aqi)
+from datetime import datetime, timedelta, timezone
+
+from aqi_bot import (BANDS, Reading, band_index, compose_message, pause_until,
+                     pm25_lines, pm25_to_us_aqi, settle_band, us_epa_aqi)
 
 
 class BandIndexTests(unittest.TestCase):
@@ -382,3 +384,37 @@ class Pm25LinesTests(unittest.TestCase):
 
     def test_neither_renders_nothing(self):
         self.assertEqual(pm25_lines(Reading(aqi=50, source="x")), [])
+
+
+class PauseUntilTests(unittest.TestCase):
+    MYT = timezone(timedelta(hours=8))
+    NOW = datetime(2026, 10, 14, 6, 0, tzinfo=timezone.utc)  # 14:00 MYT
+
+    def test_unset_or_blank_never_pauses(self):
+        self.assertIsNone(pause_until(None, self.NOW))
+        self.assertIsNone(pause_until("", self.NOW))
+        self.assertIsNone(pause_until("   ", self.NOW))
+
+    def test_future_timestamp_pauses_until_then(self):
+        until = pause_until("2026-10-21T09:55+08:00", self.NOW)
+        self.assertEqual(until, datetime(2026, 10, 21, 9, 55, tzinfo=self.MYT))
+
+    def test_past_timestamp_no_longer_pauses(self):
+        self.assertIsNone(pause_until("2026-10-14T13:59+08:00", self.NOW))
+
+    def test_pause_ends_exactly_at_the_given_moment(self):
+        self.assertIsNone(pause_until("2026-10-14T14:00+08:00", self.NOW))
+
+    def test_date_only_resumes_at_the_start_of_that_local_day(self):
+        until = pause_until("2026-10-21", self.NOW, local_tz=self.MYT)
+        self.assertEqual(until, datetime(2026, 10, 21, 0, 0, tzinfo=self.MYT))
+
+    def test_naive_time_is_read_as_local_time(self):
+        until = pause_until("2026-10-14 15:00", self.NOW, local_tz=self.MYT)
+        self.assertEqual(until, datetime(2026, 10, 14, 15, 0, tzinfo=self.MYT))
+        self.assertIsNone(pause_until("2026-10-14 13:00", self.NOW, local_tz=self.MYT))
+
+    def test_garbage_does_not_pause(self):
+        # A typo must not silently swallow health alerts.
+        with self.assertLogs("aqi-bot", level="WARNING"):
+            self.assertIsNone(pause_until("next tuesday", self.NOW))

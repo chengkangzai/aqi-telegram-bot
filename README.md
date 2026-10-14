@@ -210,6 +210,20 @@ To find your chat id, message your bot, then:
 curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | grep -o '"id":[0-9-]*' | head -1
 ```
 
+## Pausing
+
+Going away, or just need a quiet week? Set `AQI_PAUSE_UNTIL` in the env file:
+
+```bash
+AQI_PAUSE_UNTIL=2026-10-21T09:55+08:00   # or just 2026-10-21 (local midnight)
+```
+
+Hourly alerts and the morning briefing are skipped until then and resume on
+their own afterwards — no timer to remember to re-enable. The listener keeps
+answering `/now` and friends. A paused check fetches nothing and writes no
+state, so the first run after the pause compares against the last band it
+actually saw. An unreadable value is logged and ignored rather than obeyed.
+
 ## Setting secrets
 
 Use the helper rather than editing the file by hand — the value is read from a
